@@ -1,125 +1,62 @@
 #include <iostream>
-#include <pookie.hpp>
+#include <functional>
+#include <string>
 
-using namespace pookie;
+#include <state_machine.hpp>
 
-namespace
+// imitate the regular expression [ab][ab123]+
+// expands to (a | b) (a | b | 1 | 2 | 3) (a | b | 1 | 2 | 3) *
+
+enum State
 {
-
-enum class Type
-{
-    NONE = 0,
-    OPEN,
-    PING,
-    PONG,
-    CLOSE
+    START,
+    ALPHANUM,
+    END
 };
 
-struct Event
+struct SetMatcher
 {
-    Type type;
-    const char* message;
+    const char* set;
+
+    SetMatcher(const char* s) : set(s) { }
+
+    bool operator()(const char& tok, const State&)
+    { return std::string(set).find(tok) != std::string::npos; }
 };
 
-const Event events[] =
+using RegexMachine = Machine<char, State>;
+
+// matches [ab]
+const auto MATCHFN_ALPHA = SetMatcher("ab");
+const auto MATCHFN_NUM = SetMatcher("123");
+
+const RegexMachine::ActionFn ALPHA_ACTION = []() { std::cout << "Matched 'ab'\n"; };
+const RegexMachine::ActionFn NUM_ACTION = []() { std::cout << "Matched '123'\n"; };
+
+const RegexMachine::Rule RULE_ALPHA { {MATCHFN_ALPHA}, ALPHA_ACTION };
+const RegexMachine::Rule RULE_NUM { {MATCHFN_NUM}, NUM_ACTION };
+
+const std::string good = "ab12";
+const std::string bad1 = "gb12";
+const std::string bad2 = "ab99";
+
+void test(const RegexMachine::Grammar& g, const std::string& string)
 {
-    { Type::OPEN, "foo" },
-    { Type::PING, "bar" },
-    { Type::PONG, "buzz" },
-    { Type::CLOSE, "bat" },
-    { Type::NONE, nullptr }
-};
-
-} // namespace
-
-namespace
-{
-
-std::ostream& operator<<(std::ostream& os, const Type& t)
-{
-    switch ( t )
-    {
-        case Type::OPEN: os << "OPEN"; break;
-        case Type::PING: os << "PING"; break;
-        case Type::PONG: os << "PONG"; break;
-        case Type::CLOSE: os << "CLOSE"; break;
-        default: os << "NONE"; break;
-    }
-
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const Event& e)
-{
-    os << "Event { " << e.type << ", '" << e.message << "' }";
-    return os;
-}
-
-} // namespace
-
-namespace
-{
-
-enum class SMState
-{ START, OPEN, CLOSE, PING, PONG, INVALID, END };
-
-struct Context { };
-
-#define MATCHER() \
-    [](Context* ctx, Event& e, const SMState& k)
-
-#define ACTION() \
-    [](Context* ctx, Event& e, const SMState& k)
-
-const auto NULL_MATCHER = MATCHER() { return true; };
-const auto NULL_ACTION = ACTION() { };
-
-}
-
-void process(Machine<Event, SMState>& machine, const Event& e)
-{
-    std::cout << "Processing " << e << std::endl;
-    std::cout << "Result: " << machine.input(e) << std::endl;
-}
-
-void main_loop(Machine<Event, SMState>& machine)
-{
-    static int index = 0;
-
-    machine.reset(SMState::START);
-
-    while ( events[index].message )
-        process(machine, events[index++]);
+    RegexMachine machine(g, START);
+    std::cout << "testing '" << string << "'\n";
+    for ( auto c : string )
+        if ( !machine.input(c) )
+            break;
 }
 
 int main()
 {
-    Machine<Event, SMState> machine;
-    machine[SMState::START] = {
-        [](const Event& e, const SMState&) { return e.type == Type::OPEN; },
-        [](const Event& e, const SMState&) { std::cout << "doing action for start -> open\n"; },
-        { SMState::OPEN }
-    };
+    RegexMachine::Grammar grammar;
+    grammar[START] = RULE_ALPHA >> ALPHANUM;
+    grammar[ALPHANUM] = RULE_ALPHA >> ALPHANUM;
+    grammar[ALPHANUM] = RULE_NUM >> ALPHANUM;
 
-    machine[SMState::OPEN] = {
-        [](const Event& e, const SMState&) { return e.type == Type::CLOSE; },
-        [](const Event& e, const SMState&) { std::cout << "doing action for open -> close\n"; },
-        { SMState::CLOSE }
-    };
-
-    machine[SMState::OPEN] = {
-        [](const Event& e, const SMState&) { return e.type == Type::PING; },
-        [](const Event& e, const SMState&) { std::cout << "doing action for open -> ping\n"; },
-        { SMState::PING }
-    };
-
-    machine[SMState::PING] = {
-        [](const Event& e, const SMState&) { return e.type == Type::PONG; },
-        [](const Event& e, const SMState&) { std::cout << "doing action for ping -> pong\n"; },
-        { SMState::OPEN }
-    };
-
-
-    main_loop(machine);
-    return 0;
+    test(grammar, good);
+    test(grammar, bad1);
+    test(grammar, bad2);
 }
